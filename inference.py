@@ -23,6 +23,7 @@ parser.add_argument('--detector_weight', type=str ,help='trained weight')
 parser.add_argument('--classifier_weight', type=str ,help='trained weight')
 parser.add_argument('--input_path', type=str, help='path to an image to inference')
 parser.add_argument('--output_path', type=str, help='path to save csv result file')
+parser.add_argument('--visualized', type=str, default='/content/visualized', help='path to save visualized images')
 parser.add_argument('--gpus', type=str, default='0', help='path to save inferenced image')
 parser.add_argument('--min_conf', type=float, default= 0.15, help='minimum confidence for an object to be detect')
 parser.add_argument('--min_iou', type=float, default=0.5, help='minimum iou threshold for non max suppression')
@@ -34,13 +35,14 @@ parser.add_argument('--expand_top', type=float, default=1.0, help='bbox expansio
 parser.add_argument('--expand_btm', type=float, default=0.5, help='bbox expansion')
 parser.add_argument('--expand_left', type=float, default=0.5, help='bbox expansion')
 parser.add_argument('--expand_right', type=float, default=0.5, help='bbox expansion')
+parser.add_argument('--no_visualization', dest='visualization', action='store_false')
+parser.set_defaults(visualization=True)
 
 class ClassificationTestset():
-    def __init__(self, config, input_path, img_list, transforms=None):
-        self.input_path = input_path # path to image folder or a single image
+    def __init__(self, config, img_list, transforms=None):
         self.transforms = transforms
         self.image_size = config.image_size
-        self.load_images()
+        self.load_images(img_list)
 
     def get_batch_size(self):
         num_samples = len(self.img_list)
@@ -48,25 +50,21 @@ class ClassificationTestset():
         # Temporary
         return 1
 
-    def load_images(self):
+    def load_images(self, img_list):
         self.img_list = img_list
 
     def __getitem__(self, idx):
-        img = self.img_list[idx]['image']
-        image_name = self.img_list[idx]['ori_img_name']
+        img = self.img_list[idx]
         if self.transforms is not None:
             img = self.transforms(image=img)['image']
         return {
             'img': img,
-            'img_name': image_name,
         }
 
     def collate_fn(self, batch):
         imgs = torch.stack([s['img'] for s in batch])  
-        img_names = [s['img_name'] for s in batch]
         return {
             'imgs': imgs,
-            'img_names': img_names,
         }
 
     def __len__(self):
@@ -75,7 +73,7 @@ class ClassificationTestset():
     def __str__(self):
         return f"Number of found images: {len(self.img_list)}"
   
-def main(args, config, img_list):
+def classify(args, config, img_list):
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpu_devices
     num_gpus = len(config.gpu_devices.split(','))
     devices_info = get_devices_info(config.gpu_devices)
@@ -98,9 +96,8 @@ def main(args, config, img_list):
 
     testset = ClassificationTestset(
         config, 
-        args.input_path,
-        transforms=test_transforms,
-        img_list=img_list)
+        img_list=img_list,
+        transforms=test_transforms)
 
     testloader = DataLoader(
         testset,
@@ -124,39 +121,18 @@ def main(args, config, img_list):
     if args.classifier_weight is not None:                
         load_checkpoint(model, args.classifier_weight)
 
-    ## Print info
-    print(config)
-    print(testset)
-    print(f"Nubmer of gpus: {num_gpus}")
-    print(devices_info)
-
-
-
-    image_names = []
     pred_list = []
     prob_list = []
 
-    with tqdm(total=len(testloader)) as pbar:
-        with torch.no_grad():
-            for idx, batch in enumerate(testloader):
+    with torch.no_grad():
+        for idx, batch in enumerate(testloader):  
+            preds, probs = model.inference_step(batch, return_probs=True)
+
+            for idx, (pred, prob) in enumerate(zip(preds, probs)):
+                pred_list.append(class_names[pred])
+                prob_list.append(prob)
                 
-                preds, probs = model.inference_step(batch, return_probs=True)
-
-                for idx, (pred, prob) in enumerate(zip(preds, probs)):
-                    img_name = batch['img_names'][idx]
-                    image_names.append(img_name)
-                    pred_list.append(class_names[pred])
-                    prob_list.append(prob)
-
-    result_df = pd.DataFrame({
-        'image_names':image_names,
-        'predictions': pred_list,
-        'probalities': prob_list
-    })
-
-    result_df.to_csv(args.output_path, index=False)
-
-    print(f"Result file is saved to {args.output_path}")
+    return pred_list, prob_list
 
 class DetectionTestset():
     def __init__(self, config, input_path, transforms=None):
@@ -272,18 +248,29 @@ def detect(args, config):
     if args.detector_weight is not None:                
         load_checkpoint(model, args.detector_weight)
 
-    # if os.path.isdir(args.input_path):
-    #     if not os.path.exists(args.output_path):
-    #         os.makedirs(args.output_path)
+    if os.path.isdir(args.input_path):
+        if not os.path.exists(args.visualized):
+            os.makedirs(args.visualized)
 
+    #load classfier' configs
+    classifier_config = get_config(args.classifier_weight)
+    if classifier_config is None:
+        print("Config not found. Load configs from classification/configs/configs.yaml")
+        classifier_config = Config(os.path.join('classification/configs','configs.yaml'))
+    else:
+        print("Load configs from weight")
 
     ## Print info
     print(config)
+    print(classifier_config)
     print(testset)
     print(f"Nubmer of gpus: {num_gpus}")
     print(devices_info)
 
+    labels_list = []
+    prob_list = []
     img_list = []
+    box_list = []
 
     empty_imgs = 0
     with tqdm(total=len(testloader)) as pbar:
@@ -321,6 +308,8 @@ def detect(args, config):
                         empty_imgs += 1
                         boxes = None
 
+                    _croppedImgs = []
+
                     if boxes is not None:
                         for box in boxes:
                             box[0]-=args.expand_left*box[2]
@@ -334,12 +323,39 @@ def detect(args, config):
                             if (uly<0): uly = 0
                             if (ulx<0): ulx = 0
                             _img = ori_img[uly:lry, ulx:lrx]
-                            _img = img_resize(_img, 256)
-                            ret_img = {'ori_img_name': img_name, 'box': box, 'image': _img}
-                            img_list.append(ret_img)
+                            _img = img_resize(_img, classifier_config.image_size[0])
+
+                            box_list.append(box)
+                            _croppedImgs.append(_img)
+                            img_list.append(img_name)
+                        
+                        _labels, _probs = classify(args,classifier_config,img_list=_croppedImgs)
+
+                        labels_list += _labels
+
+                        prob_list += _probs
+
+                        if (args.visualization):
+                            if os.path.isdir(args.input_path):
+                                out_path = os.path.join(args.visualized, img_name)
+                            else:
+                                out_path = args.visualized
+                            draw_boxes_v2(out_path, ori_img , boxes, _labels, _probs, class_names)
+
                 pbar.update(1)
                 pbar.set_description(f'Empty images: {empty_imgs}')
-    return img_list
+
+    result_df = pd.DataFrame({
+        'img_name':img_list,
+        'predictions': labels_list,
+        'probalities': prob_list,
+        'bbox': box_list
+    })
+
+    result_df.to_csv(args.output_path, index=False)
+
+    print(f"Result file is saved to {args.output_path}")
+
 
 def img_resize(img, size, interpolation = cv2.INTER_AREA):
     h, w = img.shape[:2]
@@ -361,15 +377,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     config = get_config(args.detector_weight)
     if config is None:
-        print("Config not found. Load configs from configs/configs.yaml")
+        print("Config not found. Load configs from detection/configs/configs.yaml")
         config = Config(os.path.join('detection/configs','configs.yaml'))
     else:
         print("Load configs from weight")
-    img_list = detect(args, config)
-    config = get_config(args.classifier_weight)
-    if config is None:
-        print("Config not found. Load configs from configs/configs.yaml")
-        config = Config(os.path.join('classification/configs','configs.yaml'))
-    else:
-        print("Load configs from weight")
-    main(args,config,img_list)
+    detect(args, config)
+    

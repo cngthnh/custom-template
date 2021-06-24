@@ -59,18 +59,13 @@ def draw_boxes_v2(img_name, img, boxes, labels, scores, obj_list=None, figsize=(
         img = img.numpy().squeeze().transpose((1,2,0))
     # Display the image
     ax.imshow(img)
-
     # Create a Rectangle patch
     for box, label, score in zip(boxes, labels, scores):
-        label = int(label)
-        color = STANDARD_COLORS[label]
+        color = STANDARD_COLORS[0]
         x,y,w,h = box
         rect = patches.Rectangle((x,y),w,h,linewidth=1.5,edgecolor = color,facecolor='none')
         score = np.round(score, 3)
-        if obj_list is not None:
-            text = '{}: {}'.format(obj_list[label], str(score))
-        else:
-            text = '{}: {}'.format(label, str(score))
+        text = '{}: {}'.format(label, str(score))
         plt.text(x, y-3,text, color = color, fontsize=15)
         # Add the patch to the Axes
         ax.add_patch(rect)
