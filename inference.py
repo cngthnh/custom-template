@@ -31,10 +31,10 @@ parser.add_argument('--tta', action='store_true', help='whether to use test time
 parser.add_argument('--tta_ensemble_mode', type=str, default='wbf', help='tta ensemble mode')
 parser.add_argument('--tta_conf_threshold', type=float, default=0.01, help='tta confidence score threshold')
 parser.add_argument('--tta_iou_threshold', type=float, default=0.9, help='tta iou threshold')
-parser.add_argument('--expand_top', type=float, default=1.0, help='bbox expansion')
-parser.add_argument('--expand_btm', type=float, default=0.5, help='bbox expansion')
-parser.add_argument('--expand_left', type=float, default=0.5, help='bbox expansion')
-parser.add_argument('--expand_right', type=float, default=0.5, help='bbox expansion')
+parser.add_argument('--expand_top', type=float, default=0.7, help='bbox expansion')
+parser.add_argument('--expand_btm', type=float, default=0.3, help='bbox expansion')
+parser.add_argument('--expand_left', type=float, default=0.3, help='bbox expansion')
+parser.add_argument('--expand_right', type=float, default=0.3, help='bbox expansion')
 parser.add_argument('--no_visualization', dest='visualization', action='store_false')
 parser.set_defaults(visualization=True)
 
@@ -316,12 +316,17 @@ def detect(args, config):
                             box[1]-=args.expand_top*box[3]
                             box[2]+=(args.expand_left + args.expand_right)*box[2]
                             box[3]+=(args.expand_top + args.expand_btm)*box[3]
+
+                            if (box[1]<0): box[1] = 0
+                            if (box[0]<0): box[0] = 0
+                            if (box[0]+box[2]>img_ori_ws): box[2]=img_ori_ws-box[0]
+                            if (box[1]+box[3]>img_ori_hs): box[3]=img_ori_hs-box[1]
+
                             uly = int(box[1])
                             ulx = int(box[0])
                             lrx = int(box[0]+box[2])
                             lry = int(box[1]+box[3])
-                            if (uly<0): uly = 0
-                            if (ulx<0): ulx = 0
+
                             _img = ori_img[uly:lry, ulx:lrx]
                             _img = img_resize(_img, classifier_config.image_size[0])
 
