@@ -316,9 +316,13 @@ def detect(args, config):
                             box[1]-=args.expand_top*box[3]
                             box[2]+=(args.expand_left + args.expand_right)*box[2]
                             box[3]+=(args.expand_top + args.expand_btm)*box[3]
-
-                            if (box[1]<0): box[1] = 0
-                            if (box[0]<0): box[0] = 0
+                            
+                            if (box[1]<0):
+                                box[3]+=box[1]
+                                box[1] = 0
+                            if (box[0]<0):
+                                box[2]+=box[0] 
+                                box[0] = 0
                             if (box[0]+box[2]>img_ori_ws): box[2]=img_ori_ws-box[0]
                             if (box[1]+box[3]>img_ori_hs): box[3]=img_ori_hs-box[1]
 
@@ -339,7 +343,7 @@ def detect(args, config):
                         labels_list += _labels
 
                         prob_list += _probs
-
+                        
                         if (args.visualization):
                             if os.path.isdir(args.input_path):
                                 out_path = os.path.join(args.visualized, img_name)
