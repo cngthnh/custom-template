@@ -66,7 +66,7 @@ def draw_boxes_v2(img_name, img, boxes, labels, scores, obj_list=None, figsize=(
         rect = patches.Rectangle((x,y),w,h,linewidth=1.5,edgecolor = color,facecolor='none')
         score = np.round(score, 3)
         text = '{}: {}'.format(label, str(score))
-        plt.text(x, y-3,text, color = color, fontsize=15)
+        plt.text(x+5, y+22,text, color = color, fontsize=13)
         # Add the patch to the Axes
         ax.add_patch(rect)
     plt.axis('off')
