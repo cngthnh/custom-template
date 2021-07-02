@@ -30,6 +30,8 @@ class BaseTimmModel(nn.Module):
             self.model.classifier = nn.Linear(
                 self.model.classifier.in_features, num_classes
             )
+        elif name.find("resnetv2") != -1:
+            self.model.head.fc = nn.Conv2d(self.model.head.fc.in_channels, num_classes, 1, bias=True)
         else:
             assert False, "Classifier block not included in TimmModel"
 
