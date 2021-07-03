@@ -32,6 +32,12 @@ class BaseTimmModel(nn.Module):
             )
         elif name.find("resnetv2") != -1:
             self.model.head.fc = nn.Conv2d(self.model.head.fc.in_channels, num_classes, 1, bias=True)
+        elif name.find("mixer") != -1:
+            self.model.head = nn.Linear(self.model.head.in_features, num_classes)
+        elif name.find("twins") != -1:
+            self.model.head = nn.Linear(self.model.head.in_features, num_classes)
+        elif name.find("pit") != -1:
+            self.model.head = nn.Linear(self.model.head.in_features, num_classes)
         else:
             assert False, "Classifier block not included in TimmModel"
 
