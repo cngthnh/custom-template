@@ -35,6 +35,7 @@ parser.add_argument('--expand_top', type=float, default=0.7, help='bbox expansio
 parser.add_argument('--expand_btm', type=float, default=0.3, help='bbox expansion')
 parser.add_argument('--expand_left', type=float, default=0.3, help='bbox expansion')
 parser.add_argument('--expand_right', type=float, default=0.3, help='bbox expansion')
+parser.add_argument('--bbox_overlap_threshold', type=float, default=0.75, help='overlapping bbox reduction threshold')
 parser.add_argument('--no_visualization', dest='visualization', action='store_false')
 parser.set_defaults(visualization=True)
 
@@ -288,7 +289,7 @@ def detect(args, config):
                     img_h = batch['image_hs'][idx]
                     img_ori_ws = batch['image_ori_ws'][idx]
                     img_ori_hs = batch['image_ori_hs'][idx]
-                    
+
                     outputs = postprocessing(
                         outputs, 
                         current_img_size=[img_w, img_h],
@@ -300,7 +301,7 @@ def detect(args, config):
                         output_format='xywh',
                         mode=config.fusion_mode)
 
-                    boxes = outputs['bboxes'] 
+                    boxes = outputs['bboxes']
                     labels = outputs['classes']  
                     scores = outputs['scores']
 
@@ -311,6 +312,10 @@ def detect(args, config):
                     _croppedImgs = []
 
                     if boxes is not None:
+
+                        boxes = boxes.tolist()
+                        
+                        #bounding box expansion
                         for box in boxes:
                             box[0]-=args.expand_left*box[2]
                             box[1]-=args.expand_top*box[3]
@@ -326,6 +331,49 @@ def detect(args, config):
                             if (box[0]+box[2]>img_ori_ws): box[2]=img_ori_ws-box[0]
                             if (box[1]+box[3]>img_ori_hs): box[3]=img_ori_hs-box[1]
 
+                        #reduce overlapping boxes
+                        removeList = []
+                        for lbox in boxes:
+                            larea = lbox[2]*lbox[3]
+                            for sbox in boxes:
+                                sarea = sbox[2]*sbox[3]
+                                if (larea<=sarea):
+                                    continue
+                                if (sbox[0]>lbox[0]):
+                                    x0 = sbox[0]
+                                else:
+                                    x0 = lbox[0]
+                                if (sbox[1]>lbox[1]):
+                                    y0 = sbox[1]
+                                else:
+                                    y0 = lbox[1]
+                                l = lbox[2]-x0+lbox[0]
+                                s = sbox[2]-x0+sbox[0]
+                                
+                                if (l<s):
+                                    overlapWidth=l
+                                else:
+                                    overlapWidth=s
+
+                                l = lbox[3]-y0+lbox[1]
+                                s = sbox[3]-y0+sbox[1]
+
+                                if (l<s):
+                                    overlapHeight=l
+                                else:
+                                    overlapHeight=s
+                                if (overlapWidth<0 or overlapHeight<0):
+                                    overlapHeight=0
+                                    overlapWidth=0
+
+                                if (overlapHeight*overlapWidth>=args.bbox_overlap_threshold*sarea):
+                                    removeList.append(sbox)
+
+                        for box in removeList:
+                            if (box in boxes):
+                                boxes.remove(box)
+
+                        for box in boxes:
                             uly = int(box[1])
                             ulx = int(box[0])
                             lrx = int(box[0]+box[2])
