@@ -1,5 +1,8 @@
 # Pytorch Custom Template for Image Classification
 
+## Notebook:
+Demo using this template:  [![Notebook](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1Zk87VMlG4DyguhYsXo_NYVvqUypUaKj4?usp=sharing)
+
 ## To-do list:
 - [ ] Improved Progressive Learning ([EfficientNetV2](https://arxiv.org/abs/2104.00298v1))
 - [ ] Test time augmentation
@@ -49,12 +52,19 @@ settings:
   train_imgs: train
   val_imgs: val
   test_imgs: test
-
-  obj_list: [
-      <class 0's name>,
-      <class 1's name>,
-      ...
-  ]
 ```
+
+## Training:
+```
+python train.py 
+```
+See [train.py](https://github.com/kaylode/custom-template/blob/classification/train.py) for more extra parameters
+
+## Inference:
+```
+python detect.py --weight=<weight path>
+```
+See [detect.py](https://github.com/kaylode/custom-template/blob/classification/detect.py) for more extra parameters
+
 ## Reference:
 - timm models from https://github.com/rwightman/pytorch-image-models
