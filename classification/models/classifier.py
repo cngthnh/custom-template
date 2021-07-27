@@ -42,6 +42,11 @@ class Classifier(BaseModel):
             return preds.cpu().numpy(), probs.cpu().numpy()
         else:
             return preds.numpy()
+    
+    def inference_all(self, batch):
+        outputs = self.model(batch, self.device)
+        probs = torch.nn.functional.softmax(outputs, dim=1)
+        return probs.cpu().numpy()
 
     def evaluate_step(self, batch):
         outputs = self.model(batch, self.device)

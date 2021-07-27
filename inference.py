@@ -17,6 +17,8 @@ from albumentations.pytorch.transforms import ToTensorV2
 from detection.augmentations.transforms import get_resize_augmentation
 from detection.augmentations.transforms import MEAN, STD
 import numpy as np
+from os import listdir
+from collections import defaultdict
 
 parser = argparse.ArgumentParser(description='Classify an image / folder of images')
 parser.add_argument('--detector_weight', type=str ,help='trained weight')
@@ -37,7 +39,9 @@ parser.add_argument('--expand_left', type=float, default=0.3, help='bbox expansi
 parser.add_argument('--expand_right', type=float, default=0.3, help='bbox expansion')
 parser.add_argument('--bbox_overlap_threshold', type=float, default=0.75, help='overlapping bbox reduction threshold')
 parser.add_argument('--no_visualization', dest='visualization', action='store_false')
+parser.add_argument('--k_fold_cross_val', dest='use_k_fold', action='store_true')
 parser.set_defaults(visualization=True)
+parser.set_defaults(use_k_fold=False)
 
 class ClassificationTestset():
     def __init__(self, config, img_list, transforms=None):
@@ -74,7 +78,7 @@ class ClassificationTestset():
     def __str__(self):
         return f"Number of found images: {len(self.img_list)}"
   
-def classify(args, config, img_list):
+def classify(args, img_list, model, config):
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpu_devices
     num_gpus = len(config.gpu_devices.split(','))
     devices_info = get_devices_info(config.gpu_devices)
@@ -108,32 +112,11 @@ def classify(args, config, img_list):
         collate_fn=testset.collate_fn
     )
 
-    if args.classifier_weight is not None:
-        class_names, num_classes = get_class_names(args.classifier_weight)
-
-
-    net = BaseTimmModel(
-        name=config.model_name, 
-        num_classes=num_classes)
-
-    model = Classifier( model = net,  device = device)
-
-    model.eval()
-    if args.classifier_weight is not None:                
-        load_checkpoint(model, args.classifier_weight)
-
-    pred_list = []
-    prob_list = []
 
     with torch.no_grad():
         for idx, batch in enumerate(testloader):  
-            preds, probs = model.inference_step(batch, return_probs=True)
-
-            for idx, (pred, prob) in enumerate(zip(preds, probs)):
-                pred_list.append(class_names[pred])
-                prob_list.append(prob)
-                
-    return pred_list, prob_list
+            probs = model.inference_all(batch)
+    return probs.tolist()
 
 class DetectionTestset():
     def __init__(self, config, input_path, transforms=None):
@@ -252,14 +235,63 @@ def detect(args, config):
     if os.path.isdir(args.input_path):
         if not os.path.exists(args.visualized):
             os.makedirs(args.visualized)
+    classifiers_dir = []
+    modelList = []
+    configList = []
 
     #load classfier' configs
-    classifier_config = get_config(args.classifier_weight)
-    if classifier_config is None:
-        print("Config not found. Load configs from classification/configs/configs.yaml")
-        classifier_config = Config(os.path.join('classification/configs','configs.yaml'))
+    if (args.use_k_fold == False):
+        classifiers_dir = [args.classifier_weight]
+        _config = get_config(args.classifier_weight)
+        configList = [_config]
+        if classifiers_dir[0] is not None:
+            classifier_class_names, classifier_num_classes = get_class_names(classifiers_dir[0])
+        net = BaseTimmModel(
+                name=_config.model_name, 
+                num_classes=classifier_num_classes)
+
+        _model = Classifier( model = net,  device = device)
+
+        _model.eval()
+        if args.classifier_weight is not None:                
+            load_checkpoint(_model, args.classifier_weight)
+        modelList = [_model]
     else:
-        print("Load configs from weight")
+        if args.classifier_weight[-1]=='/':
+            _path = args.classifier_weight
+        else:
+            _path = args.classifier_weight + '/'
+        for c in listdir(args.classifier_weight):
+            classifiers_dir.append(_path+c)
+
+        if classifiers_dir[0] is not None:
+                classifier_class_names, classifier_num_classes = get_class_names(classifiers_dir[0])
+
+        for c_weight in classifiers_dir:
+
+            _config = get_config(c_weight)
+            print("FOLD :: " + c_weight + ":")
+            if _config is None:
+                print("\tConfig not found. Load configs from classification/configs/configs.yaml")
+                _config = Config(os.path.join('classification/configs','configs.yaml'))
+            else:
+                print("\tLoad configs from weight")
+            
+            configList.append(_config)
+
+            net = BaseTimmModel(
+                name=_config.model_name, 
+                num_classes=classifier_num_classes)
+
+            _model = Classifier( model = net,  device = device)
+
+            _model.eval()
+            if c_weight is not None:                
+                load_checkpoint(_model, c_weight)
+
+            modelList.append(_model)
+
+    classifier_config = configList[0]
 
     ## Print info
     print(config)
@@ -386,7 +418,29 @@ def detect(args, config):
                             _croppedImgs.append(_img)
                             img_list.append(img_name)
                         
-                        _labels, _probs = classify(args,classifier_config,img_list=_croppedImgs)
+                        _avg_probs = []
+                        _all_probs = []
+                        _labels = []
+
+                        for box in range(len(_croppedImgs)):
+                            __probs = []
+                            for i in range(len(modelList)):
+                                _probs = classify(args,img_list=_croppedImgs, model=modelList[i], config=configList[i])
+                                __probs.append(_probs)
+                            _all_probs.append(__probs)
+                        
+                        for box in range(len(_croppedImgs)):
+                            _avg = np.zeros(classifier_num_classes)
+                            for i in range(len(modelList)):
+                                _avg = [x + y for x, y in zip(_all_probs[box][i][0], _avg)]
+                            _avg_probs.append([x/float(len(modelList)) for x in _avg])
+                        
+                        # max of average probs
+                        _probs = []
+                        for probs in _avg_probs:
+                            _maxProb = max(probs)
+                            _labels.append(classifier_class_names[probs.index(_maxProb)])
+                            _probs.append(_maxProb)
 
                         labels_list += _labels
 
@@ -397,7 +451,7 @@ def detect(args, config):
                                 out_path = os.path.join(args.visualized, img_name)
                             else:
                                 out_path = args.visualized
-                            draw_boxes_v2(out_path, ori_img , boxes, _labels, _probs, class_names)
+                            draw_boxes_v2(out_path, ori_img , boxes, _labels, _probs)
 
                 pbar.update(1)
                 pbar.set_description(f'Empty images: {empty_imgs}')
